@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interview Scheduler</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+    background: #f3f4f6;
+    color: #1f2937;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { margin: 0 0 4px; font-size: 1.6rem; }
+  .sub { color: #6b7280; margin: 0 0 20px; font-size: .9rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.1);
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .add-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  input[type=text] {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: .95rem;
+  }
+  input[type=text]:focus { outline: 2px solid #6366f1; border-color: transparent; }
+  button {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: .9rem;
+    background: #4f46e5;
+    color: #fff;
+  }
+  button:hover { opacity: .9; }
+  button.danger { background: #ef4444; }
+  button.ghost { background: #e5e7eb; color: #374151; }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+  .item.absent { background: #fef2f2; border-color: #fecaca; }
+  .item.absent input[type=text] { text-decoration: line-through; color: #9ca3af; }
+  .num { min-width: 22px; color: #9ca3af; font-size: .85rem; text-align: center; }
+  .badge {
+    min-width: 36px;
+    text-align: center;
+    background: #eef2ff;
+    color: #4338ca;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: .85rem;
+  }
+  .item label {
+    font-size: .8rem;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .warn {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb; }
+  th { color: #6b7280; font-weight: 600; }
+  .unassigned { color: #ef4444; }
+  .summary { margin-top: 14px; font-size: .9rem; color: #374151; }
+  .empty { color: #9ca3af; font-style: italic; font-size: .9rem; padding: 8px 0; }
+  .footer { margin-top: 16px; }
+</style>
+</head>
+<body>
+
+<h1>Interview Scheduler</h1>
+<p class="sub">
+  Candidates are split equally among available interviewers. Mark an interviewer as absent
+  and their interviews are redistributed automatically. All names are editable.
+</p>
+
+<div id="warning" class="warn">
+  No interviewers are available. Interviews cannot be assigned until at least one interviewer is present.
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Interviewers</h2>
+    <form id="addInterviewerForm" class="add-row">
+      <input type="text" id="newInterviewer" placeholder="Add interviewer name">
+      <button type="submit">Add</button>
+    </form>
+    <div id="interviewerList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Candidates</h2>
+    <form id="addCandidateForm" class="add-row">
+      <input type="text" id="newCandidate" placeholder="Add candidate name">
+      <button type="submit">Add</button>
+    </form>
+    <div id="candidateList"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:20px">
+  <h2>Interview Schedule</h2>
+  <div id="schedule"></div>
+  <div id="summary" class="summary"></div>
+</div>
+
+<div class="footer">
+  <button class="ghost" id="resetBtn">Reset to defaults</button>
+</div>
+
+<script>
+  const STORAGE_KEY = 'interviewScheduler';
+  let counter = 0;
+  const nextId = () => `id_${Date.now()}_${counter++}`;
+
+  function defaultState() {
+    return {
+      interviewers: [
+        { id: nextId(), name: 'Interviewer 1', absent: false },
+        { id: nextId(), name: 'Interviewer 2', absent: false },
+        { id: nextId(), name: 'Interviewer 3', absent: false }
+      ],
+      candidates: Array.from({ length: 6 }, (_, i) => ({
+        id: nextId(),
+        name: `Candidate ${i + 1}`
+      }))
+    };
+  }
+
+  function loadState() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      if (saved && Array.isArray(saved.interviewers) && Array.isArray(saved.candidates)) {
+        return saved;
+      }
+    } catch (e) { /* ignore corrupt storage */ }
+    return defaultState();
+  }
+
+  let state = loadState();
+
+  function saveState() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+  }
+
+  function esc(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  // Round-robin over available interviewers keeps counts within 1 of each other
+  function computeAssignments() {
+    const available = state.interviewers.filter(i => !i.absent);
+    const counts = {};
+    state.interviewers.forEach(i => counts[i.id] = 0);
+
+    const rows = state.candidates.map((candidate, idx) => {
+      if (available.length === 0) return { candidate, interviewer: null };
+      const interviewer = available[idx % available.length];
+      counts[interviewer.id]++;
+      return { candidate, interviewer };
+    });
+
+    return { rows, counts, available };
+  }
+
+  // ---------- Rendering ----------
+
+  function renderInterviewers() {
+    const { counts } = computeAssignments();
+    const list = document.getElementById('interviewerList');
+
+    if (state.interviewers.length === 0) {
+      list.innerHTML = '<div class="empty">No interviewers yet.</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+    state.interviewers.forEach(iv => {
+      const row = document.createElement('div');
+      row.className = 'item' + (iv.absent ? ' absent' : '');
+      row.innerHTML = `
+        <span class="badge" title="Interviews assigned" data-count="${iv.id}">${counts[iv.id]}</span>
+        <input type="text" data-type="iv-name" data-id="${iv.id}">
+        <label>
+          <input type="checkbox" data-type="iv-absent" data-id="${iv.id}" ${iv.absent ? 'checked' : ''}>
+          Absent
+        </label>
+        <button class="danger" data-type="iv-remove" data-id="${iv.id}" title="Remove">✕</button>
+      `;
+      row.querySelector('input[type=text]').value = iv.name;
+      list.appendChild(row);
+    });
+  }
+
+  function renderCandidates() {
+    const list = document.getElementById('candidateList');
+
+    if (state.candidates.length === 0) {
+      list.innerHTML = '<div class="empty">No candidates yet.</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+    state.candidates.forEach((c, idx) => {
+      const row = document.createElement('div');
+      row.className = 'item';
+      row.innerHTML = `
+        <span class="num">${idx + 1}</span>
+        <input type="text" data-type="c-name" data-id="${c.id}">
+        <button class="danger" data-type="c-remove" data-id="${c.id}" title="Remove">✕</button>
+      `;
+      row.querySelector('input[type=text]').value = c.name;
+      list.appendChild(row);
+    });
+  }
+
+  function renderSchedule() {
+    const { rows, counts, available } = computeAssignments();
+
+    document.getElementById('warning').style.display =
+      (available.length === 0 && state.candidates.length > 0) ? 'block' : 'none';
+
+    const box = document.getElementById('schedule');
+    if (rows.length === 0) {
+      box.innerHTML = '<div class="empty">Add candidates to see the schedule.</div>';
+    } else {
+      box.innerHTML = `
+        <table>
+          <thead>
+            <tr><th>#</th><th>Candidate</th><th>Interviewer</th></tr>
+          </thead>
+          <tbody>
+            ${rows.map((r, i) => `
+              <tr>
+                <td>${i + 1}</td>
+                <td>${esc(r.candidate.name)}</td>
+                <td>${r.interviewer
+                  ? esc(r.interviewer.name)
+                  : '<span class="unassigned">Unassigned</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    const summary = document.getElementById('summary');
+    if (available.length === 0 || rows.length === 0) {
+      summary.textContent = '';
+    } else {
+      const vals = available.map(i => counts[i.id]);
+      const assigned = rows.filter(r => r.interviewer).length;
+      summary.textContent =
+        `Total interviews: ${assigned} · Available interviewers: ${available.length} of ${state.interviewers.length} · ` +
+        `Per interviewer: ${Math.min(...vals)} to ${Math.max(...vals)}`;
+    }
+  }
+
+  // Updates badges and schedule without re-rendering inputs (keeps typing focus)
+  function refreshDerived() {
+    const { counts } = computeAssignments();
+    document.querySelectorAll('[data-count]').forEach(el => {
+      el.textContent = counts[el.dataset.count];
+    });
+    renderSchedule();
+    saveState();
+  }
+
+  function renderAll() {
+    renderInterviewers();
+    renderCandidates();
+    renderSchedule();
+    saveState();
+  }
+
+  // ---------- Events ----------
+
+  document.getElementById('addInterviewerForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const input = document.getElementById('newInterviewer');
+    const name = input.value.trim() || `Interviewer ${state.interviewers.length + 1}`;
+    state.interviewers.push({ id: nextId(), name, absent: false });
+    input.value = '';
+    renderAll();
+  });
+
+  document.getElementById('addCandidateForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const input = document.getElementById('newCandidate');
+    const name = input.value.trim() || `Candidate ${state.candidates.length + 1}`;
+    state.candidates.push({ id: nextId(), name });
+    input.value = '';
+    renderAll();
+  });
+
+  const interviewerList = document.getElementById('interviewerList');
+  interviewerList.addEventListener('input', e => {
+    if (e.target.dataset.type === 'iv-name') {
+      const iv = state.interviewers.find(i => i.id === e.target.dataset.id);
+      if (iv) {
+        iv.name = e.target.value;
+        refreshDerived();
+      }
+    }
+  });
+  interviewerList.addEventListener('change', e => {
+    if (e.target.dataset.type === 'iv-absent') {
+      const iv = state.interviewers.find(i => i.id === e.target.dataset.id);
+      if (iv) {
+        iv.absent = e.target.checked;
+        renderAll();
+      }
+    }
+  });
+  interviewerList.addEventListener('click', e => {
+    const btn = e.target.closest('[data-type="iv-remove"]');
+    if (btn) {
+      state.interviewers = state.interviewers.filter(i => i.id !== btn.dataset.id);
+      renderAll();
+    }
+  });
+
+  const candidateList = document.getElementById('candidateList');
+  candidateList.addEventListener('input', e => {
+    if (e.target.dataset.type === 'c-name') {
+      const c = state.candidates.find(x => x.id === e.target.dataset.id);
+      if (c) {
+        c.name = e.target.value;
+        refreshDerived();
+      }
+    }
+  });
+  candidateList.addEventListener('click', e => {
+    const btn = e.target.closest('[data-type="c-remove"]');
+    if (btn) {
+      state.candidates = state.candidates.filter(c => c.id !== btn.dataset.id);
+      renderAll();
+    }
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    if (confirm('Reset all interviewers and candidates to defaults?')) {
+      state = defaultState();
+      renderAll();
+    }
+  });
+
+  renderAll();
+</script>
+</body>
+</html>
